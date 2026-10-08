@@ -1,619 +1,390 @@
-# Kubernetes Volumes, PV, PVC and Storage Classes
+# Kubernetes Volumes, PV, PVC, StorageClass, EBS and EFS
 
-When data is written inside a Pod's container filesystem, that data is tied to the lifecycle of the Pod/container.
+Kubernetes Pods are temporary. If data is stored only inside a Pod's container filesystem, that data can be lost when the Pod is deleted and recreated.
 
-If the Pod is deleted and a new Pod is created, data stored only inside the old Pod's writable container filesystem may be lost.
-
-This creates the need for **persistent storage**.
-
-Kubernetes provides storage concepts such as:
-
-- Volumes
-- PersistentVolume (PV)
-- PersistentVolumeClaim (PVC)
-- StorageClass
-- CSI Drivers
+For applications that need persistent data, Kubernetes provides **Volumes, PersistentVolumes (PV), PersistentVolumeClaims (PVC), and StorageClasses**.
 
 ---
 
 # 1. Why Do We Need Persistent Storage?
 
-Consider a Pod running a database:
+Consider a database running inside a Pod:
 
 ```text
-Database Pod
-     |
-     ↓
-Writes data
-     |
-     ↓
+Pod
+└── Database
+    └── Data
+```
+
+If the Pod is deleted:
+
+```text
 Pod deleted
-     |
      ↓
-New Pod created
-     |
-     ↓
-Data stored only inside old container filesystem
-     |
+Container filesystem deleted
      ↓
 Data may be lost
 ```
 
-Therefore, applications that need data to survive Pod replacement should use persistent storage.
+Therefore, applications such as databases need persistent storage outside the temporary Pod/container filesystem.
 
 ---
 
 # 2. Stateless vs Stateful Applications
 
-## Stateless Application
+### Stateless application
 
-A stateless application does not depend on locally stored state that must survive replacement of the Pod.
-
-For example:
-
-```text
-Zomato Frontend
-      ↓
-Stateless
-```
-
-If the frontend Pod is deleted, another Pod can be created and serve the application without needing the old Pod's local filesystem data.
-
----
-
-## Stateful Application
-
-A stateful application maintains important data or identity that must persist across Pod replacement.
-
-For example:
-
-```text
-Zomato Database
-      ↓
-Stateful
-```
-
-The database data should be stored on persistent storage rather than only inside the Pod's writable filesystem.
-
----
-
-# 3. Persistent Storage
-
-Kubernetes can connect workloads to storage outside the Pod.
-
-A simplified view:
-
-```text
-Pod
- |
- | mounts
- ↓
-PVC
- |
- | binds to
- ↓
-PV
- |
- | backed by
- ↓
-Storage
-```
-
-For example, in AWS:
-
-```text
-Pod
- ↓
-PVC
- ↓
-PV
- ↓
-EBS Volume
-```
-
-Or for shared file storage:
-
-```text
-Pod
- ↓
-PVC
- ↓
-PV
- ↓
-EFS
-```
-
----
-
-# 4. PV and PVC
-
-There are two important building blocks:
-
-### PV — PersistentVolume
-
-A **PersistentVolume** represents storage available to the Kubernetes cluster.
-
-### PVC — PersistentVolumeClaim
-
-A **PersistentVolumeClaim** is a request from a user/application for storage.
-
-Think of it like a hotel:
-
-```text
-PV  → Hotel room
-PVC → Customer booking/request
-Pod → Customer using the room
-```
-
-The user does not normally need to manage the underlying storage directly.
-
----
-
-# 5. PV and PVC Relationship
-
-The basic flow is:
-
-```text
-Storage
-   ↓
-PersistentVolume
-   ↓
-PersistentVolumeClaim
-   ↓
-Pod
-```
-
-The Pod uses the PVC.
-
-The PVC binds to a PV.
-
-The PV represents the actual storage resource.
-
----
-
-# 6. PVs Are Independent of Pods
-
-A PV is not directly tied to a Pod.
-
-A PV can exist even when no Pod is currently using it.
-
-For example:
-
-```text
-PV
- |
- └── PVC
-      |
-      └── Pod
-```
-
-If the Pod is deleted, the PV does not automatically disappear just because the Pod is gone.
-
-The behavior of the PV after PVC deletion depends on its **reclaim policy**.
-
----
-
-# 7. Provisioning Storage
-
-There are two main ways to create PVs:
-
-```text
-1. Static Provisioning
-2. Dynamic Provisioning
-```
-
----
-
-# 8. Static Provisioning
-
-In **static provisioning**, the administrator manually creates PVs.
+A stateless application does not depend on data stored inside the individual Pod.
 
 Example:
 
 ```text
-Administrator
-      |
-      ↓
-Creates PV
-      |
-      ↓
-User creates PVC
-      |
-      ↓
-Kubernetes searches for matching PV
-      |
-      ↓
-PVC binds to PV
+Frontend
+API Gateway
+Web Server
 ```
 
-If no suitable PV exists:
+If a frontend Pod is deleted, Kubernetes can create another Pod without needing the old Pod's local data.
+
+### Stateful application
+
+A stateful application maintains persistent state or data.
+
+Examples:
 
 ```text
-PVC
- ↓
-Pending
+MySQL
+PostgreSQL
+MongoDB
+Redis
 ```
+
+These applications commonly require persistent storage.
+
+> Stateful does not simply mean "the data survives Pod deletion." Stateful applications maintain persistent state, identity, or ordering, and persistent storage is one important mechanism used to preserve their data.
 
 ---
 
-# 9. Why Static Provisioning Is Less Convenient
+# 3. Kubernetes Volumes
 
-Static provisioning requires manual work.
+A Kubernetes Volume provides storage that can be mounted inside a Pod.
+
+Example:
+
+```yaml
+spec:
+  containers:
+    - name: nginx
+      image: nginx
+
+      volumeMounts:
+        - name: app-storage
+          mountPath: /data
+
+  volumes:
+    - name: app-storage
+      emptyDir: {}
+```
+
+Here:
+
+```text
+Pod
+ │
+ └── Volume
+      │
+      └── /data
+```
+
+The type of Volume determines how and where the data is stored.
+
+---
+
+# 4. PersistentVolume (PV)
+
+A **PersistentVolume (PV)** is a piece of storage made available to the Kubernetes cluster.
+
+It can be backed by storage such as:
+
+```text
+Amazon EBS
+Amazon EFS
+Azure Disk
+Google Persistent Disk
+NFS
+etc.
+```
+
+A PV exists independently from a particular Pod.
+
+```text
+Cluster
+   │
+   └── PV
+        │
+        └── Persistent Storage
+```
+
+The storage administrator or a dynamic provisioning system can create the PV.
+
+---
+
+# 5. PersistentVolumeClaim (PVC)
+
+A **PersistentVolumeClaim (PVC)** is a request for storage made by a Kubernetes user/application.
 
 For example:
 
 ```text
-Administrator
-    ↓
-Create storage
-    ↓
-Create PV
-    ↓
-Wait for PVC
+Application
+     │
+     ▼
+    PVC
+     │
+     ▼
+   Request
+  "I need 10Gi"
+     │
+     ▼
+    PV
 ```
 
-This becomes difficult when many applications need storage.
+The PVC does **not** contain the actual storage.
 
-Possible problems include:
-
-- Manual effort
-- Difficult to manage at scale
-- Storage may be underutilized
-- Administrator must provision PVs ahead of time
+It is a request for storage.
 
 ---
 
-# 10. Dynamic Provisioning
+# 6. PV vs PVC
 
-In **dynamic provisioning**, Kubernetes automatically creates storage when a PVC requests it.
+| PV | PVC |
+|---|---|
+| Actual storage resource | Request for storage |
+| Cluster resource | User/application request |
+| Provides storage | Requests storage |
+| Can be created statically or dynamically | Created by application/user |
+| Example: 20Gi EBS-backed PV | Request for 10Gi |
 
-The basic flow is:
+### Easy analogy
+
+Think of a hotel:
 
 ```text
-User creates PVC
-       ↓
-PVC references StorageClass
-       ↓
-StorageClass uses CSI driver/provisioner
-       ↓
-Backend storage is created
-       ↓
-PV is created
-       ↓
-PVC binds to PV
-       ↓
-Pod uses PVC
+PV  → Hotel room
+PVC → Customer booking/request
+Pod → Customer staying in the room
 ```
 
-The administrator does not need to manually create every PV.
+The customer does not create the hotel room.
+
+The customer requests a room, and Kubernetes matches the request with available storage.
 
 ---
 
-# 11. StorageClass
+# 7. Access Modes
+
+PVCs specify how the storage should be accessed.
+
+### RWO — ReadWriteOnce
+
+The volume can be mounted as read-write by workloads on **one node at a time**.
+
+Common example:
+
+```text
+EBS
+```
+
+### ROX — ReadOnlyMany
+
+The volume can be mounted as read-only by multiple nodes.
+
+### RWX — ReadWriteMany
+
+The volume can be mounted as read-write by multiple nodes.
+
+Common example:
+
+```text
+EFS
+```
+
+### Easy memory trick
+
+```text
+RWO → ReadWriteOnce
+ROX → ReadOnlyMany
+RWX → ReadWriteMany
+```
+
+---
+
+# 8. Static vs Dynamic Provisioning
+
+There are two major ways to create persistent storage.
+
+## Static Provisioning
+
+The administrator creates the storage first.
+
+```text
+Administrator
+     │
+     ▼
+    PV
+     │
+     ▼
+    PVC
+     │
+     ▼
+    Pod
+```
+
+The PV already exists before the application requests it.
+
+### Problems with static provisioning
+
+- Manual work
+- Difficult to manage at scale
+- Possible resource wastage
+- Administrator must create storage manually
+
+---
+
+# 9. Dynamic Provisioning
+
+With dynamic provisioning, Kubernetes can create storage automatically when a PVC requests it.
+
+```text
+Pod
+ │
+ ▼
+PVC
+ │
+ ▼
+StorageClass
+ │
+ ▼
+CSI Driver
+ │
+ ▼
+Cloud Storage
+```
+
+This is the preferred approach in many cloud environments.
+
+---
+
+# 10. StorageClass
 
 A **StorageClass** defines how storage should be dynamically provisioned.
 
-It acts like a template for creating storage.
+It specifies things such as:
 
-A StorageClass can define things such as:
-
-- Provisioner/CSI driver
-- Storage type
-- Backend parameters
+- Storage provisioner/CSI driver
+- Storage parameters
 - Reclaim policy
-- Volume binding behavior
-- Other storage-specific options
+- Other backend-specific options
 
-The simplified relationship is:
+Example:
 
-```text
-PVC
- ↓
-StorageClass
- ↓
-CSI Driver
- ↓
-Storage Backend
- ↓
-PV
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: my-storage
+provisioner: ebs.csi.aws.com
+```
+
+Then a PVC can request that StorageClass:
+
+```yaml
+spec:
+  storageClassName: my-storage
 ```
 
 ---
 
-# 12. CSI Driver
+# 11. CSI — Container Storage Interface
 
 CSI stands for:
 
 **Container Storage Interface**
 
-CSI drivers allow Kubernetes to communicate with different storage systems.
-
-For example:
-
-```text
-Kubernetes
-     |
-     ↓
-CSI Driver
-     |
-     ├── AWS EBS
-     ├── AWS EFS
-     ├── Azure Disk
-     ├── Azure Files
-     └── Other storage systems
-```
+CSI allows Kubernetes to communicate with external storage systems.
 
 For AWS:
 
 ```text
-EBS CSI Driver → EBS volumes
-EFS CSI Driver → EFS file systems
-```
-
----
-
-# 13. Access Modes
-
-Access modes define how a volume can be mounted by workloads.
-
-The three commonly discussed access modes are:
-
-```text
-RWO
-ROX
-RWX
-```
-
----
-
-## RWO — ReadWriteOnce
-
-```text
-Read + Write
-```
-
-The volume can be mounted read-write by workloads on **one node at a time**.
-
-Example:
-
-```text
-Node 1
- ├── Pod A
- └── Pod B
-       |
-       ↓
-      EBS
-```
-
-Multiple Pods on the same node may be able to use the volume, depending on the workload and mount configuration.
-
-But the volume cannot generally be mounted read-write from multiple nodes simultaneously.
-
-AWS EBS is commonly used with:
-
-```text
-ReadWriteOnce
-```
-
----
-
-## ROX — ReadOnlyMany
-
-```text
-Read Only + Multiple
-```
-
-Multiple nodes can mount the volume as read-only.
-
-```text
-Node 1 ──┐
-Node 2 ──┼──→ Storage
-Node 3 ──┘
-       Read Only
-```
-
----
-
-## RWX — ReadWriteMany
-
-```text
-Read + Write + Multiple
-```
-
-Multiple nodes can mount the same volume for read/write access.
-
-```text
-Node 1 ──┐
-Node 2 ──┼──→ Shared Storage
-Node 3 ──┘
-       Read + Write
-```
-
-Shared file systems such as AWS EFS are commonly used for this type of workload.
-
-> Important: The access modes a storage system supports depend on the storage backend and CSI driver. Not every storage system supports every access mode.
-
----
-
-# 14. Access Mode Comparison
-
-| Access Mode | Read | Write | Multiple Nodes |
-|---|---|---|---|
-| RWO | Yes | Yes | No, one node at a time |
-| ROX | Yes | No | Yes |
-| RWX | Yes | Yes | Yes |
-
-Easy memory trick:
-
-```text
-RWO → Read Write Once
-ROX → Read Only Many
-RWX → Read Write Many
-```
-
----
-
-# 15. Reclaim Policy
-
-A reclaim policy defines what happens to the PV after its PVC is deleted.
-
-It controls the lifecycle behavior of the underlying storage/PV.
-
-Common policies are:
-
-```text
-1. Retain
-2. Delete
-3. Recycle (deprecated)
-```
-
----
-
-# 16. Retain
-
-```yaml
-persistentVolumeReclaimPolicy: Retain
-```
-
-The PV and underlying storage are retained after the PVC is deleted.
-
-This is useful when we want to protect important data.
-
-```text
-PVC deleted
-     ↓
-PV retained
-     ↓
-Storage/data preserved
-```
-
-The administrator can then manually handle the PV and storage.
-
----
-
-# 17. Delete
-
-```yaml
-persistentVolumeReclaimPolicy: Delete
-```
-
-When the PVC is deleted, Kubernetes can delete the dynamically provisioned PV and associated backend storage according to the driver's behavior.
-
-```text
-PVC deleted
-     ↓
-PV deleted
-     ↓
-Backend storage may be deleted
-```
-
-This is useful when storage should have the same lifecycle as the claim.
-
----
-
-# 18. Recycle
-
-```text
-Recycle
-```
-
-The old `Recycle` policy performed a basic cleanup of the volume and made it available for reuse.
-
-However:
-
-> **Recycle is deprecated and should not be used for modern Kubernetes configurations.**
-
-The commonly used policies today are:
-
-```text
-Retain
-Delete
-```
-
----
-
-# 19. Static vs Dynamic Provisioning
-
-| Feature | Static | Dynamic |
-|---|---|---|
-| PV creation | Administrator | Automatically provisioned |
-| StorageClass | Not required | Usually used |
-| Manual effort | High | Low |
-| Suitable for | Pre-created storage | On-demand storage |
-| Scalability | Lower | Higher |
-
-### Static
-
-```text
-Admin
- ↓
-PV
- ↓
-PVC
- ↓
-Pod
-```
-
-### Dynamic
-
-```text
-PVC
- ↓
-StorageClass
- ↓
+Kubernetes
+     │
+     ▼
 CSI Driver
- ↓
-Storage Backend
- ↓
-PV
- ↓
-Pod
+     │
+     ├── EBS CSI
+     │
+     └── EFS CSI
 ```
+
+The CSI driver communicates with the AWS storage service.
 
 ---
 
-# 20. Scenario A — Dynamic Provisioning with AWS EBS
+# 12. Amazon EBS
 
-AWS EBS is block storage.
+Amazon EBS is **block storage**.
 
-A common EKS storage architecture is:
+It is commonly used for:
+
+- Databases
+- Application disks
+- Persistent block storage
+- Workloads requiring high-performance block devices
+
+Architecture:
 
 ```text
 Pod
- ↓
+ │
+ ▼
 PVC
- ↓
+ │
+ ▼
 StorageClass
- ↓
+ │
+ ▼
 EBS CSI Driver
- ↓
-AWS EBS Volume
+ │
+ ▼
+Amazon EBS Volume
 ```
 
-The EBS CSI driver allows Kubernetes to manage EBS volumes.
+---
+
+# 13. Scenario A — Dynamic Provisioning with EBS CSI
+
+The EBS CSI driver allows Kubernetes to dynamically provision Amazon EBS volumes.
+
+## Prerequisites
+
+The EBS CSI driver needs AWS permissions to perform operations such as:
+
+```text
+Create volume
+Attach volume
+Detach volume
+Delete volume
+```
+
+For modern EKS setups, the recommended approach is to give the **EBS CSI controller** a dedicated IAM role using **IRSA or EKS Pod Identity**.
+
+A simple lab may use the worker-node IAM role, but a dedicated CSI-driver IAM role is the better production pattern.
 
 ---
 
-# 21. EBS CSI Driver Prerequisites
+# 14. Associate IAM OIDC Provider
 
-Before using EBS dynamic provisioning, make sure the cluster has the AWS EBS CSI driver configured.
-
-The driver needs appropriate AWS permissions to perform operations such as:
-
-- Create volumes
-- Attach volumes
-- Detach volumes
-- Delete volumes
-
-The exact IAM configuration depends on how the EBS CSI driver is installed.
-
-For example, when using IAM roles for service accounts, an OIDC provider is required.
-
----
-
-# 22. Associate IAM OIDC Provider
-
-For an EKS cluster:
+The OIDC provider allows a Kubernetes ServiceAccount to assume an AWS IAM role.
 
 ```bash
 eksctl utils associate-iam-oidc-provider \
@@ -622,57 +393,78 @@ eksctl utils associate-iam-oidc-provider \
   --approve
 ```
 
-This allows Kubernetes service accounts to be associated with IAM roles through IAM Roles for Service Accounts (IRSA).
+This establishes a relationship like:
+
+```text
+Kubernetes ServiceAccount
+          │
+          ▼
+     OIDC Provider
+          │
+          ▼
+       IAM Role
+          │
+          ▼
+      AWS APIs
+```
+
+This avoids putting AWS access keys directly inside Pods.
 
 ---
 
-# 23. Check EBS CSI Driver
+# 15. Check EBS CSI Driver
 
-Check whether EBS CSI driver Pods are running:
+Check whether the EBS CSI driver is already installed:
 
 ```bash
 kubectl get pods -n kube-system | grep ebs-csi
 ```
 
-You may see components such as:
+You should see components such as:
 
 ```text
-ebs-csi-controller-...
-ebs-csi-node-...
+ebs-csi-controller-xxxxx
+ebs-csi-node-xxxxx
 ```
 
-They should be in a healthy/running state.
+They should be in `Running` state.
 
 ---
 
-# 24. Install EBS CSI Driver Using Helm
+# 16. Install Helm
 
-Install Helm if it is not already installed:
+If Helm is not already installed:
 
 ```bash
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 ```
 
-Check Helm:
+Check:
 
 ```bash
 helm version
 ```
 
-Add the EBS CSI driver repository:
+---
+
+# 17. Add EBS CSI Helm Repository
 
 ```bash
 helm repo add aws-ebs-csi-driver \
   https://kubernetes-sigs.github.io/aws-ebs-csi-driver
 ```
 
-Update repositories:
+Update the repository:
 
 ```bash
 helm repo update
 ```
 
-Install:
+This downloads the latest chart information from the configured repository.
+
+---
+
+# 18. Install EBS CSI Driver
 
 ```bash
 helm install aws-ebs-csi-driver \
@@ -681,71 +473,169 @@ helm install aws-ebs-csi-driver \
   --create-namespace
 ```
 
-Then verify:
+The Helm chart provides the required EBS CSI components.
+
+---
+
+# 19. Verify EBS CSI Driver
 
 ```bash
 kubectl get pods -n kube-system | grep ebs-csi
 ```
 
-> The exact IAM and Helm configuration can vary by EKS setup. In particular, avoid assuming that attaching permissions directly to the worker-node IAM role is always the preferred production configuration; using a dedicated IAM role for the CSI controller is a common approach.
+You can also check the DaemonSet:
 
----
-
-# 25. EBS Storage Architecture
-
-After dynamic provisioning is configured:
-
-```text
-              Kubernetes
-                   |
-                   ↓
-                  PVC
-                   |
-                   ↓
-             StorageClass
-                   |
-                   ↓
-            EBS CSI Driver
-                   |
-                   ↓
-              AWS EBS
-                   |
-                   ↓
-                  PV
-                   |
-                   ↓
-                  Pod
+```bash
+kubectl get daemonset -n kube-system | grep ebs-csi
 ```
 
-The important point is that the application requests storage through a PVC rather than manually creating an EBS volume for every application.
+And the controller Deployment:
 
----
-
-# 26. Scenario B — Dynamic Provisioning with AWS EFS
-
-AWS EFS is a managed shared file system.
-
-It is useful when multiple Pods/nodes need shared access to the same filesystem.
-
-A simplified architecture is:
-
-```text
-Pod 1 ──┐
-Pod 2 ──┼──→ PVC → EFS CSI Driver → EFS
-Pod 3 ──┘
+```bash
+kubectl get deployment -n kube-system | grep ebs-csi
 ```
 
-EFS is commonly used for shared filesystem workloads.
-
 ---
 
-# 27. Step 1 — Find the VPC
+# 20. Find Which Pod Is Using Which PVC
+
+Useful command:
+
+```bash
+kubectl get pod \
+  -o custom-columns=POD:.metadata.name,PVC:.spec.volumes[*].persistentVolumeClaim.claimName
+```
 
 Example:
 
+```text
+POD                  PVC
+movievault-pod       movievault-pvc
+nginx-pod            nginx-pvc
+```
+
+To hide Pods that don't use PVCs:
+
+```bash
+kubectl get pod \
+  -o custom-columns=POD:.metadata.name,PVC:.spec.volumes[*].persistentVolumeClaim.claimName \
+  | grep -v "<none>"
+```
+
+---
+
+# 21. Important EBS Limitation
+
+EBS is **Availability-Zone scoped block storage**.
+
+For example:
+
+```text
+us-east-1a
+   │
+   └── EBS Volume
+        │
+        └── Node / Pod
+```
+
+The EBS volume is associated with a particular Availability Zone.
+
+Therefore, a workload using EBS must be scheduled appropriately so that the Pod can access the volume.
+
+EBS is not designed as a general shared filesystem across multiple AZs.
+
+For shared storage across multiple nodes/AZs, EFS is usually more suitable.
+
+---
+
+# 22. Amazon EFS
+
+Amazon EFS stands for:
+
+**Elastic File System**
+
+EFS is a managed **NFS-based shared file system**.
+
+It is useful when multiple Pods need to access the same files.
+
+Example:
+
+```text
+Worker Node 1
+    │
+   Pod A
+    │
+    ├──────────┐
+               │
+Worker Node 2  │
+    │          │
+   Pod B       ├──► EFS
+               │
+Worker Node 3  │
+    │          │
+   Pod C       │
+               │
+               └──────────
+```
+
+Multiple Pods can access the same EFS file system.
+
+---
+
+# 23. Why Use EFS?
+
+Suppose:
+
+```text
+Pod A → Node 1 → AZ-a
+
+Pod B → Node 2 → AZ-b
+```
+
+If both Pods need to access the same files, EFS can provide shared storage.
+
+Example use cases:
+
+- Shared application files
+- User uploads
+- Shared configuration/data
+- Content repositories
+- Applications requiring RWX storage
+
+---
+
+# 24. Scenario B — Dynamic Provisioning with EFS CSI
+
+The EFS CSI driver allows Kubernetes to communicate with Amazon EFS.
+
+Architecture:
+
+```text
+Pod A ─────┐
+Pod B ─────┼──► PVC
+Pod C ─────┘
+             │
+             ▼
+        StorageClass
+             │
+             ▼
+        EFS CSI Driver
+             │
+             ▼
+            EFS
+```
+
+---
+
+# 25. Step 1 — Get VPC ID
+
+First identify a subnet used by an EKS worker node.
+
+Then:
+
 ```bash
 VPC_ID=$(aws ec2 describe-subnets \
-  --subnet-ids subnet-06e1ce571dde7da18 \
+  --subnet-ids <Node1-SubnetID> \
   --query "Subnets[0].VpcId" \
   --output text)
 ```
@@ -756,11 +646,13 @@ Check:
 echo $VPC_ID
 ```
 
+If the worker-node subnets belong to the same VPC, using one worker-node subnet is enough to retrieve the VPC ID.
+
 ---
 
-# 28. Step 2 — Create Security Group
+# 26. Step 2 — Create Security Group
 
-Create a security group for EFS:
+Create a Security Group for EFS:
 
 ```bash
 aws ec2 create-security-group \
@@ -769,31 +661,29 @@ aws ec2 create-security-group \
   --vpc-id $VPC_ID
 ```
 
-Save the returned Security Group ID.
-
-Example:
+The output will contain a Security Group ID, for example:
 
 ```text
 sg-01ab1f1033a19b4c1
 ```
 
+Save this ID.
+
 ---
 
-# 29. Allow NFS Traffic
+# 27. Allow NFS Traffic
 
-EFS uses NFS.
-
-The standard NFS port is:
+EFS uses:
 
 ```text
-TCP 2049
+TCP port 2049
 ```
 
-For a lab:
+For a lab environment:
 
 ```bash
 aws ec2 authorize-security-group-ingress \
-  --group-id <EFS-Security-Group-ID> \
+  --group-id <GroupID-From-Above-Step> \
   --protocol tcp \
   --port 2049 \
   --cidr 0.0.0.0/0
@@ -801,19 +691,26 @@ aws ec2 authorize-security-group-ingress \
 
 ### Production recommendation
 
-Do not normally expose NFS to:
+Do not expose NFS to the entire internet.
+
+Instead, allow port `2049` only from the EKS worker-node Security Group.
 
 ```text
-0.0.0.0/0
+EKS Worker Nodes
+       │
+       │ TCP 2049
+       ▼
+    EFS SG
+       │
+       ▼
+      EFS
 ```
-
-Instead, restrict access to the security group associated with the worker nodes or the appropriate application/network security boundary.
 
 ---
 
-# 30. Step 3 — Create EFS File System
+# 28. Step 3 — Create EFS File System
 
-Create an EFS file system:
+Create the EFS file system:
 
 ```bash
 aws efs create-file-system \
@@ -822,58 +719,77 @@ aws efs create-file-system \
   --throughput-mode bursting
 ```
 
-The response contains a File System ID.
-
-Example:
+The response contains a File System ID:
 
 ```text
 fs-03e917586b79c8118
 ```
 
-Save the File System ID.
+Save this ID.
 
 ---
 
-# 31. Step 4 — Create EFS Mount Targets
+# 29. Step 4 — Create EFS Mount Targets
 
-EFS requires mount targets in the VPC subnets/AZs from which clients need to access the file system.
+An EFS file system needs mount targets in the Availability Zones where clients need access.
 
-Example:
+For example:
+
+```text
+AZ-a
+ │
+ └── Subnet A
+      │
+      └── EFS Mount Target
+
+
+AZ-b
+ │
+ └── Subnet B
+      │
+      └── EFS Mount Target
+```
+
+Create the first mount target:
 
 ```bash
 aws efs create-mount-target \
   --file-system-id <FileSystemID> \
-  --subnet-id <Subnet-ID-of-AZ1> \
-  --security-groups <EFS-Security-Group-ID>
+  --subnet-id <Subnet-ID-of-Node1> \
+  --security-groups <Security-Group-ID>
 ```
 
-For another Availability Zone:
+Create another mount target in a different AZ/subnet:
 
 ```bash
 aws efs create-mount-target \
   --file-system-id <FileSystemID> \
-  --subnet-id <Subnet-ID-of-AZ2> \
-  --security-groups <EFS-Security-Group-ID>
+  --subnet-id <Subnet-ID-of-Node2> \
+  --security-groups <Security-Group-ID>
 ```
 
-Use subnets from **different Availability Zones** if you want the file system to be accessible across those AZs.
+> Use subnets from the Availability Zones where your EKS worker nodes run.
 
 ---
 
-# 32. Verify EFS Mount Targets
+# 30. Step 5 — Verify Mount Targets
 
 ```bash
 aws efs describe-mount-targets \
   --file-system-id <FileSystemID>
 ```
 
-You should see the mount targets and their associated subnets/AZs.
+You should see the configured mount targets along with their:
+
+- Mount Target ID
+- Subnet
+- Availability Zone
+- Security Group
+- IP address
 
 ---
 
-# 33. Install EFS CSI Driver
-
-The EFS CSI driver allows Kubernetes to mount EFS into Pods.
+# 31. Step 6 — Install EFS CSI Driver
 
 Add the Helm repository:
 
@@ -897,207 +813,300 @@ helm install aws-efs-csi-driver \
   --create-namespace
 ```
 
-Verify:
+---
+
+# 32. Verify EFS CSI Driver
 
 ```bash
 kubectl get pods -n kube-system | grep efs-csi
 ```
 
-You should see EFS CSI driver components running.
+You should see the EFS CSI components running.
+
+Check the DaemonSet:
+
+```bash
+kubectl get daemonset -n kube-system | grep efs-csi
+```
 
 ---
 
-# 34. EBS vs EFS
+# 33. EBS vs EFS
 
 | Feature | EBS | EFS |
 |---|---|---|
-| Storage type | Block storage | Shared file storage |
-| Typical access | RWO | RWX commonly used |
-| Multiple nodes writing simultaneously | Generally no | Yes |
-| Shared filesystem | No | Yes |
-| Example use | Database, application data | Shared files |
-| AWS service | Elastic Block Store | Elastic File System |
-| CSI Driver | EBS CSI | EFS CSI |
+| Full name | Elastic Block Store | Elastic File System |
+| Storage type | Block storage | File storage |
+| Shared across nodes | Limited | Yes |
+| Multi-AZ | Volume is AZ-scoped | Designed for multi-AZ access |
+| Common access mode | RWO | RWX |
+| Typical use | Databases, application disks | Shared files |
+| CSI driver | EBS CSI | EFS CSI |
+| Example | PostgreSQL data | Shared uploads |
 
-Easy way to remember:
+---
+
+# 34. Complete EBS Storage Flow
 
 ```text
+                    Kubernetes
+                        │
+                        ▼
+                       Pod
+                        │
+                        ▼
+                       PVC
+                        │
+                        ▼
+                  StorageClass
+                        │
+                        ▼
+                  EBS CSI Driver
+                        │
+                        ▼
+                   Amazon EBS
+```
+
+---
+
+# 35. Complete EFS Storage Flow
+
+```text
+                Kubernetes
+                     │
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+        Pod A      Pod B      Pod C
+          │          │          │
+          └──────────┼──────────┘
+                     ▼
+                    PVC
+                     │
+                     ▼
+               StorageClass
+                     │
+                     ▼
+               EFS CSI Driver
+                     │
+                     ▼
+                    EFS
+```
+
+---
+
+# 36. Static vs Dynamic Provisioning
+
+```text
+STATIC PROVISIONING
+
+Administrator
+     │
+     ▼
+    PV
+     │
+     ▼
+    PVC
+     │
+     ▼
+    Pod
+```
+
+```text
+DYNAMIC PROVISIONING
+
+Pod
+ │
+ ▼
+PVC
+ │
+ ▼
+StorageClass
+ │
+ ▼
+CSI Driver
+ │
+ ▼
+Cloud Storage
+ │
+ ▼
+PV
+```
+
+The major advantage of dynamic provisioning is that the storage can be created automatically when required.
+
+---
+
+# 37. Important Commands
+
+### Check StorageClasses
+
+```bash
+kubectl get storageclass
+```
+
+### Check PVs
+
+```bash
+kubectl get pv
+```
+
+### Check PVCs
+
+```bash
+kubectl get pvc
+```
+
+### Check PVCs in all namespaces
+
+```bash
+kubectl get pvc -A
+```
+
+### Describe a PVC
+
+```bash
+kubectl describe pvc <PVC_NAME>
+```
+
+### Describe a PV
+
+```bash
+kubectl describe pv <PV_NAME>
+```
+
+### Check Pods using PVCs
+
+```bash
+kubectl get pod \
+  -o custom-columns=POD:.metadata.name,PVC:.spec.volumes[*].persistentVolumeClaim.claimName
+```
+
+---
+
+# 38. Easy Way to Remember
+
+```text
+PV
+ ↓
+Actual persistent storage
+
+
+PVC
+ ↓
+Request for storage
+
+
+StorageClass
+ ↓
+Defines how storage should be dynamically created
+
+
+CSI Driver
+ ↓
+Connects Kubernetes to the storage provider
+
+
 EBS
  ↓
 Block storage
  ↓
-Usually one node at a time
-```
+Usually RWO
+ ↓
+Good for databases/application disks
 
-```text
+
 EFS
  ↓
-Shared filesystem
+Shared file storage
  ↓
-Multiple nodes can access
+RWX
+ ↓
+Good for shared files across Pods/nodes
 ```
 
 ---
 
-# 35. Complete Storage Flow
+# 39. Interview Question
 
-The complete Kubernetes storage flow can be remembered as:
+### Why do we need PVC if PV already provides storage?
 
-```text
-                    Application
-                         |
-                         ↓
-                        Pod
-                         |
-                         ↓
-                        PVC
-                         |
-                         ↓
-                   StorageClass
-                         |
-                         ↓
-                     CSI Driver
-                         |
-              ┌──────────┴──────────┐
-              ↓                     ↓
-            AWS EBS               AWS EFS
-              ↓                     ↓
-         Block Storage        Shared File System
-```
+A **PV represents the actual storage resource**, while a **PVC is a request for that storage**.
 
----
-
-# 36. Important Points to Remember
-
-### PV
+The application normally uses the PVC instead of directly referring to a specific PV.
 
 ```text
-PersistentVolume
-↓
-Represents storage available to Kubernetes
-```
-
-### PVC
-
-```text
-PersistentVolumeClaim
-↓
-Application's request for storage
-```
-
-### StorageClass
-
-```text
-Defines how storage should be dynamically provisioned
-```
-
-### CSI Driver
-
-```text
-Connects Kubernetes with storage systems
-```
-
-### Static Provisioning
-
-```text
-Admin creates PV
-        ↓
-PVC
-        ↓
-Pod
-```
-
-### Dynamic Provisioning
-
-```text
-PVC
- ↓
-StorageClass
- ↓
-CSI Driver
- ↓
+Application
+     │
+     ▼
+    PVC
+     │
+     ▼
+    PV
+     │
+     ▼
 Storage Backend
+```
+
+This separates the application from the underlying storage implementation.
+
+---
+
+### Why do we use StorageClass?
+
+A StorageClass defines how Kubernetes should dynamically provision storage.
+
+Instead of an administrator manually creating a PV every time an application needs storage:
+
+```text
+PVC
  ↓
-PV
+StorageClass
  ↓
-Pod
-```
-
-### Access Modes
-
-```text
-RWO → ReadWriteOnce
-ROX → ReadOnlyMany
-RWX → ReadWriteMany
-```
-
-### Reclaim Policies
-
-```text
-Retain → Keep storage/PV
-Delete → Delete dynamically provisioned storage/PV according to driver behavior
-Recycle → Deprecated
-```
-
-### AWS
-
-```text
-EBS → Block storage → commonly RWO
-EFS → Shared filesystem → commonly RWX
+CSI Driver
+ ↓
+Storage automatically created
 ```
 
 ---
 
-# 37. Final Memory Trick
+### Why EFS instead of EBS?
 
-Think of a hotel:
+If multiple Pods running on different nodes/AZs need to read and write the same files, EFS is a better choice because it provides shared file storage.
+
+EBS is block storage and is AZ-scoped, making it more suitable for workloads that need persistent block storage rather than a shared filesystem.
+
+---
+
+### What is CSI?
+
+CSI stands for **Container Storage Interface**.
+
+It provides a standard interface that allows Kubernetes to communicate with external storage systems.
+
+For AWS:
 
 ```text
-PV
- ↓
-Hotel room
-
-PVC
- ↓
-Customer booking the room
-
-StorageClass
- ↓
-Hotel room type/template
-
-CSI Driver
- ↓
-System that communicates with the hotel/storage provider
-
-Pod
- ↓
-Customer actually using the room
+Kubernetes
+    │
+    ├── EBS CSI Driver ──► EBS
+    │
+    └── EFS CSI Driver ──► EFS
 ```
 
-The most important flow is:
+---
+
+# Final Memory Trick
 
 ```text
-Pod
- ↓
-PVC
- ↓
-PV
- ↓
-Storage
-```
+PVC = "I need storage"
 
-For dynamic provisioning:
+StorageClass = "How should I get it?"
 
-```text
-Pod
- ↓
-PVC
- ↓
-StorageClass
- ↓
-CSI Driver
- ↓
-Storage Backend
- ↓
-PV
+CSI = "Who connects Kubernetes to the storage?"
+
+PV = "Here is the storage resource"
+
+EBS = "Block storage"
+
+EFS = "Shared file storage"
 ```
